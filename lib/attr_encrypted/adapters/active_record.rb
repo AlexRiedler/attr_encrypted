@@ -12,7 +12,7 @@ if defined?(ActiveRecord::Base)
             def reload(*args, &block)
               result = reload_without_attr_encrypted(*args, &block)
               self.class.encrypted_attributes.keys.each do |attribute_name|
-                instance_variable_set("@#{attribute_name}", nil)
+                write_attribute(attribute_name, nil)
               end
               result
             end
@@ -43,6 +43,14 @@ if defined?(ActiveRecord::Base)
             def attributes=(*args)
               perform_attribute_assignment :attributes_without_attr_encrypted=, *args
             end
+
+            #alias_method :after_find_without_attr_encrypted, :after_find
+            def attributes
+              self.class.encrypted_attributes.each do |attr, v|
+                send(attr)
+              end
+              super
+            end
           end
         end
 
@@ -54,35 +62,44 @@ if defined?(ActiveRecord::Base)
             options = attrs.extract_options!
             attr = attrs.pop
             attribute attr if ::ActiveRecord::VERSION::STRING >= "5.1.0"
-            options.merge! encrypted_attributes[attr]
+            options.merge!(encrypted_attributes[attr])
+            encrypted_attribute_name = (options[:attribute] ? options[:attribute] : [options[:prefix], attr, options[:suffix]].join).to_sym
+
+            define_method(attr) do
+              value = super()
+              if value.nil? && @attributes[attr.to_s].value_before_type_cast.nil?
+                value = decrypt(attr, send(encrypted_attribute_name))
+                @attributes[attr.to_s].instance_variable_set("@value_before_type_cast", value)
+                write_attribute_without_type_cast(attr, value) if !@attributes.frozen?
+              else
+                instance_variable_set("@#{attr}", value)
+              end
+              value
+            end
+
+            define_method("#{attr}?") do
+              send("#{encrypted_attribute_name}?")
+            end
 
             define_method("#{attr}_was") do
-              attribute_was(attr)
+              send(attr)
+              super()
             end
 
-            if ::ActiveRecord::VERSION::STRING >= "4.1"
-              define_method("#{attr}_changed?") do |options = {}|
-                attribute_changed?(attr, options)
-              end
-            else
-              define_method("#{attr}_changed?") do
-                  attribute_changed?(attr)
-              end
+            define_method("restore_#{attr}") do
+              super()
+              send("restore_#{encrypted_attribute_name}")
             end
 
-            define_method("#{attr}_change") do
-              attribute_change(attr)
+            define_method("#{attr}_in_database") do
+              send(attr)
+              super()
             end
 
-            define_method("#{attr}_with_dirtiness=") do |value|
-              attribute_will_change!(attr) if value != __send__(attr)
-              __send__("#{attr}_without_dirtiness=", value)
+            define_method("#{attr}=") do |value|
+              send("#{encrypted_attribute_name}=", encrypt(attr, value))
+              super(value)
             end
-
-            alias_method "#{attr}_without_dirtiness=", "#{attr}="
-            alias_method "#{attr}=", "#{attr}_with_dirtiness="
-
-            alias_method "#{attr}_before_type_cast", attr
           end
 
           def attribute_instance_methods_as_symbols

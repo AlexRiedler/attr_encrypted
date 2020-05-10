@@ -164,8 +164,11 @@ module AttrEncrypted
       end
 
       define_method("#{attribute}=") do |value|
-        send("#{encrypted_attribute_name}=", encrypt(attribute, value))
-        instance_variable_set("@#{attribute}", value)
+        old_value = send(attribute)
+        if old_value.nil? || old_value != value
+          send("#{encrypted_attribute_name}=", encrypt(attribute, value))
+          instance_variable_set("@#{attribute}", value)
+        end
       end
 
       define_method("#{attribute}?") do

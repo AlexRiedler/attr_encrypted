@@ -12,7 +12,7 @@ if defined?(ActiveRecord::Base)
             def reload(*args, &block)
               result = reload_without_attr_encrypted(*args, &block)
               self.class.encrypted_attributes.keys.each do |attribute_name|
-                write_attribute(attribute_name, nil)
+                instance_variable_set("@#{attribute_name}", nil)
               end
               result
             end
@@ -32,11 +32,9 @@ if defined?(ActiveRecord::Base)
             end
             private :perform_attribute_assignment
 
-            if ::ActiveRecord::VERSION::STRING > "3.1"
-              alias_method :assign_attributes_without_attr_encrypted, :assign_attributes
-              def assign_attributes(*args)
-                perform_attribute_assignment :assign_attributes_without_attr_encrypted, *args
-              end
+            alias_method :assign_attributes_without_attr_encrypted, :assign_attributes
+            def assign_attributes(*args)
+              perform_attribute_assignment :assign_attributes_without_attr_encrypted, *args
             end
 
             alias_method :attributes_without_attr_encrypted=, :attributes=
@@ -44,12 +42,18 @@ if defined?(ActiveRecord::Base)
               perform_attribute_assignment :attributes_without_attr_encrypted=, *args
             end
 
-            #alias_method :after_find_without_attr_encrypted, :after_find
+            alias_method :attributes_without_attr_encrypted, :attributes
             def attributes
+              # make sure to load all the encrypted attributes
               self.class.encrypted_attributes.each do |attr, v|
                 send(attr)
               end
-              super
+              # reject encrypted attributes from result of this function
+              # so they do not get serialized on accident
+              encryped_keys = self.class.encrypted_attributes.keys
+              attributes_without_attr_encrypted.reject do |k, _|
+                encryped_keys.include?(k.to_sym)
+              end
             end
           end
         end
@@ -61,12 +65,20 @@ if defined?(ActiveRecord::Base)
             super
             options = attrs.extract_options!
             attr = attrs.pop
-            attribute attr if ::ActiveRecord::VERSION::STRING >= "5.1.0"
+            attribute attr
             options.merge!(encrypted_attributes[attr])
-            encrypted_attribute_name = (options[:attribute] ? options[:attribute] : [options[:prefix], attr, options[:suffix]].join).to_sym
+            encrypted_attribute_name = (options[:attribute] ? options[:attribute] : [options[:prefix], attr, options[:suffix]].join).to_s
 
             define_method(attr) do
               value = super()
+
+              # check if record is not fully loaded (e.g. partial SELECT)
+              # if so, early return the value we have
+              if self.class.column_names.include?(encrypted_attribute_name) &&
+                  !attributes_without_attr_encrypted.include?(encrypted_attribute_name)
+                return
+              end
+
               if value.nil? && @attributes[attr.to_s].value_before_type_cast.nil?
                 value = decrypt(attr, send(encrypted_attribute_name))
                 @attributes[attr.to_s].instance_variable_set("@value_before_type_cast", value)
@@ -97,6 +109,8 @@ if defined?(ActiveRecord::Base)
             end
 
             define_method("#{attr}=") do |value|
+              return if send(attr) == value
+
               send("#{encrypted_attribute_name}=", encrypt(attr, value))
               super(value)
             end

@@ -45,15 +45,13 @@ end
 
 ActiveRecord::MissingAttributeError = ActiveModel::MissingAttributeError unless defined?(ActiveRecord::MissingAttributeError)
 
-if ::ActiveRecord::VERSION::STRING > "4.0"
-  module Rack
-    module Test
-      class UploadedFile; end
-    end
+module Rack
+  module Test
+    class UploadedFile; end
   end
-
-  require 'action_controller/metal/strong_parameters'
 end
+
+require 'action_controller/metal/strong_parameters'
 
 class Person < ActiveRecord::Base
   self.attr_encrypted_options[:mode] = :per_attribute_iv_and_salt
@@ -106,7 +104,6 @@ end
 class UserWithProtectedAttribute < ActiveRecord::Base
   self.table_name = 'users'
   attr_encrypted :password, key: SECRET_KEY
-  attr_protected :is_admin if ::ActiveRecord::VERSION::STRING < "4.0"
 end
 
 class PersonUsingAlias < ActiveRecord::Base
@@ -221,52 +218,94 @@ class ActiveRecordTest < Minitest::Test
     assert_equal pw.reverse, account.password
   end
 
-  if ::ActiveRecord::VERSION::STRING > "4.0"
-    def test_should_assign_attributes
-      @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
-      @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true).permit(:login)
-      assert_equal 'modified', @user.login
-    end
+  def test_should_create_will_save_change_to_predicate
+    person = Person.create!(email: 'test@example.com')
+    refute person.will_save_change_to_email?
+    person.email = 'test@example.com'
+    refute person.will_save_change_to_email?
+    person.email = 'test2@example.com'
+    assert person.will_save_change_to_email?
+  end
 
-    def test_should_not_assign_protected_attributes
-      @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
-      @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true).permit(:login)
-      assert !@user.is_admin?
-    end
+  def test_should_create_saved_change_to_predicate
+    person = Person.create!(email: 'test@example.com')
+    assert person.saved_change_to_email?
+    person.reload
+    person.email = 'test@example.com'
+    refute person.saved_change_to_email?
+    person.email = nil
+    refute person.saved_change_to_email?
+    person.email = 'test2@example.com'
+    refute person.saved_change_to_email?
+    person.save
+    assert person.saved_change_to_email?
+  end
 
-    def test_should_raise_exception_if_not_permitted
-      @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
-      assert_raises ActiveModel::ForbiddenAttributesError do
-        @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true)
-      end
-    end
+  def test_email_active_record_dirty
+    person = Person.create
+    refute person.email_was
+    refute person.changed?
+    person.reload
+    refute person.changed?
+    refute person.email_previously_changed?
 
-    def test_should_raise_exception_on_init_if_not_permitted
-      assert_raises ActiveModel::ForbiddenAttributesError do
-        @user = UserWithProtectedAttribute.new ActionController::Parameters.new(login: 'modified', is_admin: true)
-      end
-    end
-  else
-    def test_should_assign_attributes
-      @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
-      @user.attributes = { login: 'modified', is_admin: true }
-      assert_equal 'modified', @user.login
-    end
+    person.email = 'first@example.com'
+    refute person.email_previous_change
+    assert person.changed?
+    assert person.email_changed?
+    assert_equal person.changed, ["encrypted_email", "encrypted_email_salt", "encrypted_email_iv", "email"]
 
-    def test_should_not_assign_protected_attributes
-      @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
-      @user.attributes = { login: 'modified', is_admin: true }
-      assert !@user.is_admin?
-    end
+    person.save!
+    assert person.saved_change_to_email?
 
-    def test_should_assign_protected_attributes
-      @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
-      if ::ActiveRecord::VERSION::STRING > "3.1"
-        @user.send(:assign_attributes, { login: 'modified', is_admin: true }, without_protection: true)
-      else
-        @user.send(:attributes=, { login: 'modified', is_admin: true }, false)
-      end
-      assert @user.is_admin?
+    assert_equal person.email_was, 'first@example.com'
+    person.email = 'second@example.com'
+    assert_equal person.email_change, ['first@example.com', 'second@example.com']
+    person.save
+    assert person.saved_change_to_email?
+    assert_equal person.email_was, 'second@example.com'
+  end
+
+  def test_restore_attributes
+    person = Person.create(email: 'first@example.com')
+    refute person.changed?
+
+    person.email = 'second@example.com'
+    person.email = 'third@example.com'
+    assert person.changed?
+    assert person.email_changed?
+    assert_equal person.email_change, ['first@example.com', 'third@example.com']
+
+    person.restore_attributes
+
+    assert_equal person.email, 'first@example.com'
+    refute person.email_change
+    refute person.email_changed?
+    refute person.changed? # no fields should have changed
+  end
+
+  def test_should_assign_attributes
+    @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
+    @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true).permit(:login)
+    assert_equal 'modified', @user.login
+  end
+
+  def test_should_not_assign_protected_attributes
+    @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
+    @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true).permit(:login)
+    assert !@user.is_admin?
+  end
+
+  def test_should_raise_exception_if_not_permitted
+    @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
+    assert_raises ActiveModel::ForbiddenAttributesError do
+      @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true)
+    end
+  end
+
+  def test_should_raise_exception_on_init_if_not_permitted
+    assert_raises ActiveModel::ForbiddenAttributesError do
+      @user = UserWithProtectedAttribute.new ActionController::Parameters.new(login: 'modified', is_admin: true)
     end
   end
 
@@ -291,11 +330,9 @@ class ActiveRecordTest < Minitest::Test
     assert_nil @person.encrypted_credentials_iv
   end
 
-  if ::ActiveRecord::VERSION::STRING > "3.1"
-    def test_should_allow_assign_attributes_with_nil
-      @person = Person.new
-      assert_nil(@person.assign_attributes nil)
-    end
+  def test_should_allow_assign_attributes_with_nil
+    @person = Person.new
+    assert_nil(@person.assign_attributes nil)
   end
 
   def test_that_alias_encrypts_column
@@ -336,5 +373,29 @@ class ActiveRecordTest < Minitest::Test
     address.reload
     refute_equal address.encrypted_zipcode, zipcode
     assert_equal address.zipcode, zipcode
+  end
+
+  def test_should_filter_decrypted_attributes
+    @person = Person.new(email: 'test@example.com')
+    assert @person.has_attribute?(:email)
+    refute @person.attributes.keys.include? "email"
+  end
+
+  def test_should_read_attribute_without_encrypted_column_present
+    address = Address.create!(street: '123 Elm')
+    assert_nil Address.where(id: address.id).select(:id).first.street
+  end
+
+  def test_should_not_generate_iv_if_same_value
+    address = Address.new
+    assert_nil address.encrypted_street_iv
+    address.street = '10 Front St'
+    address.save
+    refute_nil(old_value = address.encrypted_street_iv)
+    address.street = '10 Front St'
+    assert_equal old_value, address.encrypted_street_iv
+    refute address.street_changed?
+    refute address.encrypted_street_iv_changed?
+    refute address.changed?
   end
 end

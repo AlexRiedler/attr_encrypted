@@ -348,6 +348,37 @@ class ActiveRecordTest < Minitest::Test
     assert_equal person.encrypted_email_salt, initial_email_encrypted_salt
   end
 
+  def test_reload_model
+    person = Person.create
+    person.email = 'first@example.com'
+    assert_equal 'first@example.com', person.email
+    person.reload
+    assert_nil person.email
+    assert_nil person.encrypted_email
+    assert_nil person.encrypted_email_iv
+    assert_nil person.encrypted_email_salt
+
+    person.email = 'second@example.com'
+    assert_equal 'second@example.com', person.email
+    person.save!
+    email_encrypted = person.encrypted_email
+    email_encrypted_iv = person.encrypted_email_iv
+    email_encrypted_salt = person.encrypted_email_salt
+
+    person.email = 'third@example.com'
+    person.reload
+    assert_equal 'second@example.com', person.email
+    assert_equal email_encrypted, person.encrypted_email
+    assert_equal email_encrypted_iv, person.encrypted_email_iv
+    assert_equal email_encrypted_salt, person.encrypted_email_salt
+  end
+
+  def test_frozen_model
+    person = Person.create(email: 'first@example.com')
+    person.freeze
+    assert_equal 'first@example.com', person.email
+  end
+
   def test_should_assign_attributes
     @user = UserWithProtectedAttribute.new(login: 'login', is_admin: false)
     @user.attributes = ActionController::Parameters.new(login: 'modified', is_admin: true).permit(:login)

@@ -248,40 +248,78 @@ class ActiveRecordTest < Minitest::Test
     person.reload
     refute person.changed?
     refute person.email_previously_changed?
+    refute person.email_in_database
 
     person.email = 'first@example.com'
     refute person.email_previous_change
+    refute person.email_in_database
     assert person.changed?
     assert person.email_changed?
-    assert_equal person.changed, ["encrypted_email", "encrypted_email_salt", "encrypted_email_iv", "email"]
+    assert_equal ["encrypted_email", "encrypted_email_salt", "encrypted_email_iv", "email"], person.changed
 
     person.save!
     assert person.saved_change_to_email?
+    assert_equal 'first@example.com', person.email_in_database
 
-    assert_equal person.email_was, 'first@example.com'
+    assert_equal 'first@example.com', person.email_was
     person.email = 'second@example.com'
-    assert_equal person.email_change, ['first@example.com', 'second@example.com']
+    assert_equal ['first@example.com', 'second@example.com'], person.email_change
     person.save
     assert person.saved_change_to_email?
-    assert_equal person.email_was, 'second@example.com'
+    assert_equal 'second@example.com', person.email_was
+    assert_equal 'second@example.com', person.email
   end
 
   def test_restore_attributes
     person = Person.create(email: 'first@example.com')
     refute person.changed?
 
+    initial_email = 'first@example.com'
+    initial_email_encrypted = person.encrypted_email
+    initial_email_encrypted_iv = person.encrypted_email_iv
+    initial_email_encrypted_salt = person.encrypted_email_salt
+
     person.email = 'second@example.com'
     person.email = 'third@example.com'
     assert person.changed?
     assert person.email_changed?
-    assert_equal person.email_change, ['first@example.com', 'third@example.com']
+    assert_equal ['first@example.com', 'third@example.com'], person.email_change
 
-    person.restore_attributes
+    assert_equal ["encrypted_email", "encrypted_email_salt", "encrypted_email_iv", "email"], person.restore_attributes
+    assert_equal [], person.changed
 
-    assert_equal person.email, 'first@example.com'
+    # verify we are still a valid state across all fields
+    assert_equal 'first@example.com', initial_email
+    assert_equal person.encrypted_email, initial_email_encrypted
+    assert_equal person.encrypted_email_iv, initial_email_encrypted_iv
+    assert_equal person.encrypted_email_salt, initial_email_encrypted_salt
+
     refute person.email_change
     refute person.email_changed?
-    refute person.changed? # no fields should have changed
+  end
+
+  def test_restore_encrypted_field
+    person = Person.create(email: 'first@example.com')
+    refute person.changed?
+    assert person.encrypted_email
+    assert person.encrypted_email_iv
+    assert person.encrypted_email_salt
+
+    initial_email = 'first@example.com'
+    initial_email_encrypted = person.encrypted_email
+    initial_email_encrypted_iv = person.encrypted_email_iv
+    initial_email_encrypted_salt = person.encrypted_email_salt
+
+    person.email = 'bad_email@example.com'
+    assert person.changed?
+    person.restore_email!
+    refute person.changed?
+
+    # verify we are still a valid state across all fields
+    assert_equal 'first@example.com', initial_email
+    assert_equal person.encrypted_email, initial_email_encrypted
+    assert_equal person.encrypted_email_iv, initial_email_encrypted_iv
+    assert_equal person.encrypted_email_salt, initial_email_encrypted_salt
   end
 
   def test_should_assign_attributes

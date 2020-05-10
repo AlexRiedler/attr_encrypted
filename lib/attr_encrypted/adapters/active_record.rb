@@ -98,9 +98,17 @@ if defined?(ActiveRecord::Base)
               super()
             end
 
-            define_method("restore_#{attr}") do
+            define_method("restore_#{attr}!") do
               super()
-              send("restore_#{encrypted_attribute_name}")
+
+              send("restore_#{encrypted_attribute_name}!")
+              case options[:mode]
+              when :per_attribute_iv
+                send("restore_#{encrypted_attribute_name}_iv!")
+              when :per_attribute_iv_and_salt
+                send("restore_#{encrypted_attribute_name}_salt!")
+                send("restore_#{encrypted_attribute_name}_iv!")
+              end
             end
 
             define_method("#{attr}_in_database") do
@@ -111,7 +119,19 @@ if defined?(ActiveRecord::Base)
             define_method("#{attr}=") do |value|
               return if send(attr) == value
 
-              send("#{encrypted_attribute_name}=", encrypt(attr, value))
+              # in the event of a restore of previous value, make it no-op instead of a change
+              if value == attribute_was(attr)
+                send("restore_#{encrypted_attribute_name}!")
+                case options[:mode]
+                when :per_attribute_iv
+                  send("restore_#{encrypted_attribute_name}_iv!")
+                when :per_attribute_iv_and_salt
+                  send("restore_#{encrypted_attribute_name}_salt!")
+                  send("restore_#{encrypted_attribute_name}_iv!")
+                end
+              else
+                send("#{encrypted_attribute_name}=", encrypt(attr, value))
+              end
               super(value)
             end
           end

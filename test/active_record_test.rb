@@ -8,6 +8,7 @@ def create_tables
   ActiveRecord::Schema.define(version: 1) do
     self.verbose = false
     create_table :people do |t|
+      t.string   :name
       t.string   :encrypted_email
       t.string   :password
       t.string   :encrypted_credentials
@@ -268,6 +269,31 @@ class ActiveRecordTest < Minitest::Test
     assert person.saved_change_to_email?
     assert_equal 'second@example.com', person.email_was
     assert_equal 'second@example.com', person.email
+  end
+
+  def test_active_record_after_save_changes
+    person = Person.create!(email: 'first@example.com')
+    assert person.saved_changes?
+    assert person.saved_change_to_email?
+    assert_equal [nil, 'first@example.com'], person.saved_change_to_email
+    assert_nil person.email_before_last_save
+
+    person.update!(email: 'second@example.com')
+
+    assert person.saved_changes?
+    assert person.saved_change_to_email?
+    assert_equal ['first@example.com', 'second@example.com'], person.saved_change_to_email
+    assert_equal 'first@example.com', person.email_before_last_save
+    assert person.saved_change_to_encrypted_email?
+    assert person.saved_change_to_encrypted_email_iv?
+    assert person.saved_change_to_encrypted_email_salt?
+
+    person.update!(name: 'Alex', email: 'second@example.com')
+    assert person.saved_changes?
+    assert person.saved_change_to_name?
+    refute person.saved_change_to_encrypted_email?
+    refute person.saved_change_to_encrypted_email_iv?
+    refute person.saved_change_to_encrypted_email_salt?
   end
 
   def test_restore_attributes

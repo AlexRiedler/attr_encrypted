@@ -487,4 +487,13 @@ class AttrEncryptedTest < Minitest::Test
     end
     assert_equal 0, calls
   end
+
+  def test_should_not_generate_iv_if_same_value
+    user = User.new
+    assert_nil user.encrypted_email_iv
+    user.email = 'thing@thing.com'
+    refute_nil(old_value = user.encrypted_email_iv)
+    user.email = 'thing@thing.com'
+    assert_equal old_value, user.encrypted_email_iv
+  end
 end
